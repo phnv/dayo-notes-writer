@@ -1,0 +1,35 @@
+inputs:
+  clipboard: clipboard
+  text: text
+  file: file
+
+templates:
+  weekly: templates/weekly.md
+  meeting: templates/meeting.md
+
+prompts:
+  clean: prompts/rewrite.md
+  meeting_rewrite: prompts/rewrite.md
+
+storage:
+  inbox: ~/notes/inbox
+  reviews: ~/notes/reviews
+
+bundles:
+  daily_review:
+    template: weekly
+    prompt: clean
+    storage: reviews
+    options:
+      overwrite: false
+
+defaults:
+  bundle: daily_review
+
+frontmatter:
+  enabled: true
+  format: yaml
+
+options:
+  overwrite: false
+  backup: true
