@@ -8,8 +8,8 @@ templates:
   meeting: templates/meeting.md
 
 prompts:
-  clean: prompts/rewrite.md
-  meeting_rewrite: prompts/rewrite.md
+  clean: prompts/WRITE_NOTE_PROMPT.md
+  meeting_rewrite: prompts/WRITE_NOTE_PROMPT.md
 
 storage:
   inbox: ~/notes/inbox

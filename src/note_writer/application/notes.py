@@ -11,6 +11,10 @@ def list_storages(config: Config) -> list[str]:
     """Return all configured storage aliases."""
     return list(config.storage.keys())
 
+def list_bundles(config: Config) -> list[str]:
+    """Return all configured bundle aliases."""
+    return list(config.bundles.keys())
+
 def write_note(fs: Filesystem, path: str, draft: NoteDraft) -> None:
     # Build markdown with frontmatter
     lines = []

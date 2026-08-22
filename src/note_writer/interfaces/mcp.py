@@ -5,7 +5,15 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 from mcp.server.mcpserver import MCPServer, Context
-from mcp.types import ToolAnnotations
+from mcp.server.mcpserver.prompts import base
+from mcp.types import (
+    ToolAnnotations,
+    InputRequiredResult,
+    ElicitRequest,
+    ElicitRequestFormParams,
+    TextResourceContents,
+    EmbeddedResource,
+)
 
 from note_writer.domain.config.models import Config
 from note_writer.domain.config.loader import load_config_from_file
@@ -18,6 +26,7 @@ from note_writer.application.notes import (
     update_note as app_update_note,
     list_templates as app_list_templates,
     list_storages as app_list_storages,
+    list_bundles as app_list_bundles,
 )
 from note_writer.infrastructure.filesystem import PathlibFilesystem
 
@@ -41,6 +50,8 @@ def get_default_paths():
     root = Path.cwd()
     config_path = Path(os.environ.get("CONFIG_PATH", root / "config" / "config.yaml"))
     prompts_dir = Path(os.environ.get("PROMPTS_DIR", root / "prompts"))
+
+    # @FINAL-REVIEW: TEMPLATES CAN BE LOCAL TO PROJECT OR ANY OTHER FOLDER
     templates_dir = Path(os.environ.get("TEMPLATES_DIR", root / "templates"))
     return config_path, prompts_dir, templates_dir
 
@@ -83,9 +94,39 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
 
     @mcp.tool(
         annotations=ToolAnnotations(read_only_hint=True),
+        description="List all available configuration bundles."
+    )
+    def list_bundles(ctx: Context) -> list[str]:
+        state: AppState = ctx.request_context.lifespan_context["state"]
+        return app_list_bundles(state.config)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(read_only_hint=True),
         description="Read a note's content from a specific storage alias and filename."
     )
-    def read_note(storage_alias: str, filename: str, ctx: Context) -> str:
+    def read_note(storage_alias: str = None, filename: str = None, ctx: Context = None) -> str | InputRequiredResult:
+        if not storage_alias or not filename:
+            if ctx and ctx.request_context.protocol_version < "2026-07-28":
+                raise ValueError("Missing required arguments: storage_alias and filename are required.")
+            return InputRequiredResult(
+                inputRequests={
+                    "missing_args": ElicitRequest(
+                        params=ElicitRequestFormParams(
+                            mode="form",
+                            message="Please provide both storage_alias and filename.",
+                            requestedSchema={
+                                "type": "object",
+                                "properties": {
+                                    "storage_alias": {"type": "string"},
+                                    "filename": {"type": "string"}
+                                },
+                                "required": ["storage_alias", "filename"]
+                            }
+                        )
+                    )
+                }
+            )
+
         state: AppState = ctx.request_context.lifespan_context["state"]
         
         if storage_alias not in state.config.storage:
@@ -104,15 +145,37 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         annotations=ToolAnnotations(destructive_hint=True),
         description="Write a new note to a specific storage alias. Overwrites if it exists."
     )
-    def write_note(
-        storage_alias: str, 
-        filename: str, 
+    def save_note(
         title: str, 
         body: str, 
         tags: list[str], 
         frontmatter: str, # passed as JSON string
-        ctx: Context
-    ) -> str:
+        storage_alias: str = None, 
+        filename: str = None, 
+        ctx: Context = None
+    ) -> str | InputRequiredResult:
+        if not storage_alias or not filename:
+            if ctx and ctx.request_context.protocol_version < "2026-07-28":
+                raise ValueError("Missing required arguments: storage_alias and filename are required.")
+            return InputRequiredResult(
+                inputRequests={
+                    "missing_args": ElicitRequest(
+                        params=ElicitRequestFormParams(
+                            mode="form",
+                            message="Please provide both storage_alias and filename.",
+                            requestedSchema={
+                                "type": "object",
+                                "properties": {
+                                    "storage_alias": {"type": "string"},
+                                    "filename": {"type": "string"}
+                                },
+                                "required": ["storage_alias", "filename"]
+                            }
+                        )
+                    )
+                }
+            )
+
         state: AppState = ctx.request_context.lifespan_context["state"]
         
         if storage_alias not in state.config.storage:
@@ -144,7 +207,29 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=False),
         description="Append content to an existing note."
     )
-    def update_note(storage_alias: str, filename: str, content: str, ctx: Context) -> str:
+    def update_note(content: str, storage_alias: str = None, filename: str = None, ctx: Context = None) -> str | InputRequiredResult:
+        if not storage_alias or not filename:
+            if ctx and ctx.request_context.protocol_version < "2026-07-28":
+                raise ValueError("Missing required arguments: storage_alias and filename are required.")
+            return InputRequiredResult(
+                inputRequests={
+                    "missing_args": ElicitRequest(
+                        params=ElicitRequestFormParams(
+                            mode="form",
+                            message="Please provide both storage_alias and filename.",
+                            requestedSchema={
+                                "type": "object",
+                                "properties": {
+                                    "storage_alias": {"type": "string"},
+                                    "filename": {"type": "string"}
+                                },
+                                "required": ["storage_alias", "filename"]
+                            }
+                        )
+                    )
+                }
+            )
+
         state: AppState = ctx.request_context.lifespan_context["state"]
         
         if storage_alias not in state.config.storage:
@@ -207,40 +292,153 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
             raise RuntimeError("Server state not initialized")
         return json.dumps(_state.config.storage, indent=2)
 
-    # --- Prompts (MCP Prompts) ---
+    @mcp.resource("config://bundles")
+    def get_bundles_config() -> str:
+        if not _state:
+            raise RuntimeError("Server state not initialized")
+        return json.dumps(_state.config.bundles, indent=2)
 
+    @mcp.resource("config://system_prompt")
+    def get_system_prompt() -> str:
+        if not _state:
+            raise RuntimeError("Server state not initialized")
+        prompt_path = _state.prompts_dir / "SERVER_PROMPT.md"
+        try:
+            return _state.fs.read_text(str(prompt_path))
+        except FileNotFoundError:
+            raise ValueError(f"System prompt file not found at {prompt_path}")
+
+    # --- Prompts (MCP Prompts) ---
     @mcp.prompt()
-    def rewrite_note(raw_text: str, template: str, storage: str) -> list[dict]:
-        """Prompt to rewrite a note using a specific template."""
+    def write_note(raw_text: str, template: str = None, prompt: str = None, storage: str = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
+        """Prompt to write a new note using a specific template and instruction prompt."""
         if not _state:
             raise RuntimeError("Server state not initialized")
             
-        # Get the actual template content to include in the prompt
-        try:
-            template_content = get_template(template)
-        except Exception as e:
-            template_content = f"<Error loading template: {e}>"
-
-        return [
-            {
-                "role": "user",
-                "content": {
-                    "type": "text",
-                    "text": (
-                        f"Please rewrite the following raw text into a note.\n\n"
-                        f"Raw Text:\n{raw_text}\n\n"
-                        f"Template to follow:\n{template_content}\n\n"
-                        f"Target Storage Alias: {storage}\n"
+        if not template or not prompt or not storage:
+            if ctx and ctx.request_context.protocol_version < "2026-07-28":
+                return [base.UserMessage(content="You are missing required arguments for this prompt (template, prompt, and storage). Please ask the user to provide these details and then try again.")]
+            return InputRequiredResult(
+                inputRequests={
+                    "missing_args": ElicitRequest(
+                        params=ElicitRequestFormParams(
+                            mode="form",
+                            message="Please provide template, prompt, and storage.",
+                            requestedSchema={
+                                "type": "object",
+                                "properties": {
+                                    "template": {"type": "string"},
+                                    "prompt": {"type": "string"},
+                                    "storage": {"type": "string"}
+                                },
+                                "required": ["template", "prompt", "storage"]
+                            }
+                        )
                     )
                 }
-            }
+            )
+            
+        return [
+            base.UserMessage(
+                content=EmbeddedResource(
+                    type="resource",
+                    resource=TextResourceContents(
+                        uri="config://system_prompt",
+                        mimeType="text/markdown",
+                        text=get_system_prompt()
+                    )
+                )
+            ),
+            base.UserMessage(
+                content=EmbeddedResource(
+                    type="resource",
+                    resource=TextResourceContents(
+                        uri=f"prompts://{prompt}",
+                        mimeType="text/markdown",
+                        text=get_prompt_file(prompt)
+                    )
+                )
+            ),
+            base.UserMessage(
+                content=EmbeddedResource(
+                    type="resource",
+                    resource=TextResourceContents(
+                        uri=f"templates://{template}",
+                        mimeType="text/markdown",
+                        text=get_template(template)
+                    )
+                )
+            ),
+            base.UserMessage(
+                content=f"Raw Text:\n{raw_text}\n\nTarget Storage Alias: {storage}"
+            )
+        ]
+
+    @mcp.prompt()
+    def update_note(raw_text: str, file_name: str = None, storage: str = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
+        """Prompt to append content to an existing note."""
+        if not _state:
+            raise RuntimeError("Server state not initialized")
+
+        if not file_name or not storage:
+            if ctx and ctx.request_context.protocol_version < "2026-07-28":
+                return [base.UserMessage(content="You are missing required arguments to update this note (file_name and storage). Please ask the user to provide these details and then try again.")]
+            return InputRequiredResult(
+                inputRequests={
+                    "missing_args": ElicitRequest(
+                        params=ElicitRequestFormParams(
+                            mode="form",
+                            message="Please provide both file_name and storage to update.",
+                            requestedSchema={
+                                "type": "object",
+                                "properties": {
+                                    "file_name": {"type": "string"},
+                                    "storage": {"type": "string"}
+                                },
+                                "required": ["file_name", "storage"]
+                            }
+                        )
+                    )
+                }
+            )
+
+        update_prompt_path = _state.prompts_dir / "UPDATE_NOTE_PROMPT.md"
+        try:
+            update_prompt_text = _state.fs.read_text(str(update_prompt_path))
+        except FileNotFoundError:
+            update_prompt_text = "<Error: UPDATE_NOTE_PROMPT.md not found>"
+
+        return [
+            base.UserMessage(
+                content=EmbeddedResource(
+                    type="resource",
+                    resource=TextResourceContents(
+                        uri="config://system_prompt",
+                        mimeType="text/markdown",
+                        text=get_system_prompt()
+                    )
+                )
+            ),
+            base.UserMessage(
+                content=EmbeddedResource(
+                    type="resource",
+                    resource=TextResourceContents(
+                        uri="prompts://UPDATE_NOTE_PROMPT.md",
+                        mimeType="text/markdown",
+                        text=update_prompt_text
+                    )
+                )
+            ),
+            base.UserMessage(
+                content=f"Raw Text:\n{raw_text}\n\nTarget File: {file_name}\nTarget Storage Alias: {storage}"
+            )
         ]
 
     return mcp
 
 
 # Setup default module-level MCP server instance for main.py entrypoint
-def create_default_server() -> MCPServer:
+def run_server() -> MCPServer:
     config_path, prompts_dir, templates_dir = get_default_paths()
     try:
         config = load_config_from_file(config_path)
@@ -256,4 +454,4 @@ def create_default_server() -> MCPServer:
     return build_server(config, fs, resolver, prompts_dir, templates_dir)
 
 
-mcp = create_default_server()
+mcp = run_server()
