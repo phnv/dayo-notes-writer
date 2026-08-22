@@ -143,9 +143,16 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
 
     @mcp.tool(
         annotations=ToolAnnotations(destructive_hint=True),
-        description="Write a new note to a specific storage alias. Overwrites if it exists."
+        description=(
+            "[Step 2 of 2 — Note Creation] Write the LLM-transformed note to storage. "
+            "MUST only be called after invoking the `write_note` prompt (Step 1), which "
+            "provides the system instructions, template, and transformation rules. "
+            "Calling this tool without Step 1 will bypass template-based transformation "
+            "and produce a note that does not conform to the server's format rules. "
+            "Overwrites if the file already exists."
+        )
     )
-    def save_note(
+    def step2_save_note(
         title: str, 
         body: str, 
         tags: list[str], 
@@ -310,28 +317,36 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
 
     # --- Prompts (MCP Prompts) ---
     @mcp.prompt()
-    def write_note(raw_text: str, template: str = None, prompt: str = None, storage: str = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
+    def write_note(raw_text: str, template: str, prompt: str, storage: str, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
         """Prompt to write a new note using a specific template and instruction prompt."""
         if not _state:
             raise RuntimeError("Server state not initialized")
             
-        if not template or not prompt or not storage:
+        if not raw_text or not template or not prompt or not storage:
             if ctx and ctx.request_context.protocol_version < "2026-07-28":
-                return [base.UserMessage(content="You are missing required arguments for this prompt (template, prompt, and storage). Please ask the user to provide these details and then try again.")]
+                return [base.UserMessage(content="""To invoke write_note, re-run the slash command with these required arguments:
+
+- raw_text (str): The raw, unformatted note content to be transformed
+- template (str): The output template to apply. Call list_templates to see available options.
+- prompt (str): The writing instruction bundle to apply. Call list_bundles to see available options.
+- storage (str): The destination storage alias. Call list_storages to see available options.
+
+Example: /mcp:dayo-notes-writer:write_note raw_text="..." template="personal" prompt="personal_thoughts" storage="inbox""")]
             return InputRequiredResult(
                 inputRequests={
                     "missing_args": ElicitRequest(
                         params=ElicitRequestFormParams(
                             mode="form",
-                            message="Please provide template, prompt, and storage.",
+                            message="Please provide raw_text, template, prompt, and storage.",
                             requestedSchema={
                                 "type": "object",
                                 "properties": {
+                                    "raw_text": {"type": "string"},
                                     "template": {"type": "string"},
                                     "prompt": {"type": "string"},
                                     "storage": {"type": "string"}
                                 },
-                                "required": ["template", "prompt", "storage"]
+                                "required": ["raw_text", "template", "prompt", "storage"]
                             }
                         )
                     )
@@ -375,27 +390,34 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         ]
 
     @mcp.prompt()
-    def update_note(raw_text: str, file_name: str = None, storage: str = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
+    def update_note(raw_text: str, file_name: str, storage: str, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
         """Prompt to append content to an existing note."""
         if not _state:
             raise RuntimeError("Server state not initialized")
 
-        if not file_name or not storage:
+        if not raw_text or not file_name or not storage:
             if ctx and ctx.request_context.protocol_version < "2026-07-28":
-                return [base.UserMessage(content="You are missing required arguments to update this note (file_name and storage). Please ask the user to provide these details and then try again.")]
+                return [base.UserMessage(content="""To invoke update_note, re-run the slash command with these required arguments:
+
+- raw_text (str): The raw content to append or integrate into the existing note
+- file_name (str): The filename of the existing note to update (e.g. "2024-01-15-meeting.md")
+- storage (str): The storage alias where the note lives. Call list_storages to see available options.
+
+Example: /mcp:dayo-notes-writer:update_note raw_text="..." file_name="my-note.md" storage="inbox""")]
             return InputRequiredResult(
                 inputRequests={
                     "missing_args": ElicitRequest(
                         params=ElicitRequestFormParams(
                             mode="form",
-                            message="Please provide both file_name and storage to update.",
+                            message="Please provide raw_text, file_name, and storage to update.",
                             requestedSchema={
                                 "type": "object",
                                 "properties": {
+                                    "raw_text": {"type": "string"},
                                     "file_name": {"type": "string"},
                                     "storage": {"type": "string"}
                                 },
-                                "required": ["file_name", "storage"]
+                                "required": ["raw_text", "file_name", "storage"]
                             }
                         )
                     )

@@ -4,27 +4,41 @@ inputs:
   file: file
 
 templates:
-  weekly: templates/weekly.md
   meeting: templates/meeting.md
+  weekly: templates/weekly.md
+  personal: templates/personal.md
 
 prompts:
-  clean: prompts/WRITE_NOTE_PROMPT.md
-  meeting_rewrite: prompts/WRITE_NOTE_PROMPT.md
+  write: prompts/WRITE_NOTE_PROMPT.md
+  update: prompts/UPDATE_NOTE_PROMPT.md
+  personal: prompts/personal.md
 
 storage:
-  inbox: ~/notes/inbox
-  reviews: ~/notes/reviews
+  inbox: /mnt/c/Users/Home/Documents/notes/inbox
+  reviews: ~/notes/reviews_drafts
 
 bundles:
   daily_review:
     template: weekly
-    prompt: clean
+    prompt: write
     storage: reviews
+    options:
+      overwrite: false
+  meeting_notes:
+    template: meeting
+    prompt: write
+    storage: inbox
+    options:
+      overwrite: false
+  personal_thoughts:
+    template: personal
+    prompt: personal
+    storage: inbox
     options:
       overwrite: false
 
 defaults:
-  bundle: daily_review
+  bundle: personal_thoughts
 
 frontmatter:
   enabled: true
