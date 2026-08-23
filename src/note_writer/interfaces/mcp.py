@@ -44,6 +44,28 @@ class AppState:
 _state: AppState | None = None
 
 
+def resolve_bundle_args(state: AppState, bundle: str | None, **kwargs) -> dict:
+    """Resolve missing arguments from a configuration bundle if provided."""
+    result = dict(kwargs)
+    if bundle:
+        if bundle not in state.config.bundles:
+            raise ValueError(f"Bundle '{bundle}' not found in configuration.")
+        
+        bundle_config = state.config.bundles[bundle]
+        
+        if result.get("template") is None and bundle_config.template is not None:
+            result["template"] = bundle_config.template
+        if result.get("prompt") is None and bundle_config.prompt is not None:
+            result["prompt"] = bundle_config.prompt
+            
+        storage_key = "storage_alias" if "storage_alias" in result else "storage"
+        if result.get(storage_key) is None and bundle_config.storage is not None:
+            result[storage_key] = bundle_config.storage
+            
+    return result
+
+
+
 def get_default_paths():
     """Resolve default paths relative to the project root."""
     # Assuming this runs from project root or via uv
@@ -104,7 +126,12 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         annotations=ToolAnnotations(read_only_hint=True),
         description="Read a note's content from a specific storage alias and filename."
     )
-    def read_note(storage_alias: str = None, filename: str = None, ctx: Context = None) -> str | InputRequiredResult:
+    def read_note(storage_alias: str = None, filename: str = None, bundle: str = None, ctx: Context = None) -> str | InputRequiredResult:
+        state: AppState = ctx.request_context.lifespan_context["state"]
+        
+        args = resolve_bundle_args(state, bundle, storage_alias=storage_alias)
+        storage_alias = args.get("storage_alias")
+
         if not storage_alias or not filename:
             if ctx and ctx.request_context.protocol_version < "2026-07-28":
                 raise ValueError("Missing required arguments: storage_alias and filename are required.")
@@ -113,21 +140,21 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
                     "missing_args": ElicitRequest(
                         params=ElicitRequestFormParams(
                             mode="form",
-                            message="Please provide both storage_alias and filename.",
+                            message="Please provide both storage_alias and filename (or a bundle).",
                             requestedSchema={
                                 "type": "object",
                                 "properties": {
+                                    "bundle": {"type": "string"},
                                     "storage_alias": {"type": "string"},
                                     "filename": {"type": "string"}
                                 },
-                                "required": ["storage_alias", "filename"]
+                                "required": ["filename"]
                             }
                         )
                     )
                 }
             )
 
-        state: AppState = ctx.request_context.lifespan_context["state"]
         
         if storage_alias not in state.config.storage:
             raise ValueError(f"Storage alias '{storage_alias}' not found in configuration.")
@@ -158,9 +185,15 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         tags: list[str], 
         frontmatter: str, # passed as JSON string
         storage_alias: str = None, 
-        filename: str = None, 
+        filename: str = None,
+        bundle: str = None,
         ctx: Context = None
     ) -> str | InputRequiredResult:
+        state: AppState = ctx.request_context.lifespan_context["state"]
+        
+        args = resolve_bundle_args(state, bundle, storage_alias=storage_alias)
+        storage_alias = args.get("storage_alias")
+
         if not storage_alias or not filename:
             if ctx and ctx.request_context.protocol_version < "2026-07-28":
                 raise ValueError("Missing required arguments: storage_alias and filename are required.")
@@ -169,21 +202,21 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
                     "missing_args": ElicitRequest(
                         params=ElicitRequestFormParams(
                             mode="form",
-                            message="Please provide both storage_alias and filename.",
+                            message="Please provide both storage_alias and filename (or a bundle).",
                             requestedSchema={
                                 "type": "object",
                                 "properties": {
+                                    "bundle": {"type": "string"},
                                     "storage_alias": {"type": "string"},
                                     "filename": {"type": "string"}
                                 },
-                                "required": ["storage_alias", "filename"]
+                                "required": ["filename"]
                             }
                         )
                     )
                 }
             )
 
-        state: AppState = ctx.request_context.lifespan_context["state"]
         
         if storage_alias not in state.config.storage:
             raise ValueError(f"Storage alias '{storage_alias}' not found in configuration.")
@@ -214,7 +247,12 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=False),
         description="Append content to an existing note."
     )
-    def update_note(content: str, storage_alias: str = None, filename: str = None, ctx: Context = None) -> str | InputRequiredResult:
+    def update_note(content: str, storage_alias: str = None, filename: str = None, bundle: str = None, ctx: Context = None) -> str | InputRequiredResult:
+        state: AppState = ctx.request_context.lifespan_context["state"]
+        
+        args = resolve_bundle_args(state, bundle, storage_alias=storage_alias)
+        storage_alias = args.get("storage_alias")
+
         if not storage_alias or not filename:
             if ctx and ctx.request_context.protocol_version < "2026-07-28":
                 raise ValueError("Missing required arguments: storage_alias and filename are required.")
@@ -223,21 +261,21 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
                     "missing_args": ElicitRequest(
                         params=ElicitRequestFormParams(
                             mode="form",
-                            message="Please provide both storage_alias and filename.",
+                            message="Please provide both storage_alias and filename (or a bundle).",
                             requestedSchema={
                                 "type": "object",
                                 "properties": {
+                                    "bundle": {"type": "string"},
                                     "storage_alias": {"type": "string"},
                                     "filename": {"type": "string"}
                                 },
-                                "required": ["storage_alias", "filename"]
+                                "required": ["filename"]
                             }
                         )
                     )
                 }
             )
 
-        state: AppState = ctx.request_context.lifespan_context["state"]
         
         if storage_alias not in state.config.storage:
             raise ValueError(f"Storage alias '{storage_alias}' not found in configuration.")
@@ -317,42 +355,54 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
 
     # --- Prompts (MCP Prompts) ---
     @mcp.prompt()
-    def write_note(raw_text: str, template: str, prompt: str, storage: str, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
+    def write_note(raw_text: str = None, template: str = None, prompt: str = None, storage: str = None, bundle: str = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
         """Prompt to write a new note using a specific template and instruction prompt."""
         if not _state:
             raise RuntimeError("Server state not initialized")
             
-        if not raw_text or not template or not prompt or not storage:
-            if ctx and ctx.request_context.protocol_version < "2026-07-28":
-                return [base.UserMessage(content="""To invoke write_note, re-run the slash command with these required arguments:
-
-- raw_text (str): The raw, unformatted note content to be transformed
-- template (str): The output template to apply. Call list_templates to see available options.
-- prompt (str): The writing instruction bundle to apply. Call list_bundles to see available options.
-- storage (str): The destination storage alias. Call list_storages to see available options.
-
-Example: /mcp:dayo-notes-writer:write_note raw_text="..." template="personal" prompt="personal_thoughts" storage="inbox""")]
-            return InputRequiredResult(
-                inputRequests={
-                    "missing_args": ElicitRequest(
-                        params=ElicitRequestFormParams(
-                            mode="form",
-                            message="Please provide raw_text, template, prompt, and storage.",
-                            requestedSchema={
-                                "type": "object",
-                                "properties": {
-                                    "raw_text": {"type": "string"},
-                                    "template": {"type": "string"},
-                                    "prompt": {"type": "string"},
-                                    "storage": {"type": "string"}
-                                },
-                                "required": ["raw_text", "template", "prompt", "storage"]
-                            }
-                        )
-                    )
-                }
-            )
+        args = resolve_bundle_args(_state, bundle, template=template, prompt=prompt, storage=storage)
+        template = args.get("template")
+        prompt = args.get("prompt")
+        storage = args.get("storage")
             
+        if not raw_text or not template or not prompt or not storage:
+            # TODO (Future MRTR Implementation):
+            # When all target clients properly support interactive HTML forms for 
+            # `InputRequiredResult` on prompt endpoints (without infinite retry loops),
+            # you can replace the UserMessage below with this pattern to dynamically 
+            # request missing arguments:
+            # 
+            # return InputRequiredResult(
+            #     inputRequests={
+            #         "missing_args": ElicitRequest(
+            #             params=ElicitRequestFormParams(
+            #                 mode="form",
+            #                 message="Please provide raw_text, template, prompt, and storage (or a bundle).",
+            #                 requestedSchema={
+            #                     "type": "object",
+            #                     "properties": {
+            #                         "bundle": {"type": "string"},
+            #                         "raw_text": {"type": "string"},
+            #                         "template": {"type": "string"},
+            #                         "prompt": {"type": "string"},
+            #                         "storage": {"type": "string"}
+            #                     },
+            #                     "required": ["raw_text"]
+            #                 }
+            #             )
+            #         )
+            #     }
+            # )
+            return [base.UserMessage(content="""To invoke write_note, re-run the slash command with these required arguments:
+
+    - raw_text (str): The raw, unformatted note content to be transformed
+    - template (str): The output template to apply. Call list_templates to see available options.
+    - prompt (str): The writing instruction bundle to apply. Call list_bundles to see available options.
+    - storage (str): The destination storage alias. Call list_storages to see available options.
+    - bundle (str): (Optional) The config bundle providing defaults.
+
+    Example: /mcp:dayo-notes-writer:write_note raw_text="..." template="personal" prompt="personal_thoughts" storage="inbox""")]
+                
         return [
             base.UserMessage(
                 content=EmbeddedResource(
@@ -390,39 +440,49 @@ Example: /mcp:dayo-notes-writer:write_note raw_text="..." template="personal" pr
         ]
 
     @mcp.prompt()
-    def update_note(raw_text: str, file_name: str, storage: str, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
+    def update_note(raw_text: str = None, file_name: str = None, storage: str = None, bundle: str = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
         """Prompt to append content to an existing note."""
         if not _state:
             raise RuntimeError("Server state not initialized")
 
+        args = resolve_bundle_args(_state, bundle, storage=storage)
+        storage = args.get("storage")
+
         if not raw_text or not file_name or not storage:
-            if ctx and ctx.request_context.protocol_version < "2026-07-28":
-                return [base.UserMessage(content="""To invoke update_note, re-run the slash command with these required arguments:
+            # TODO (Future MRTR Implementation):
+            # When all target clients properly support interactive HTML forms for 
+            # `InputRequiredResult` on prompt endpoints (without infinite retry loops),
+            # you can replace the UserMessage below with this pattern to dynamically 
+            # request missing arguments:
+            # 
+            # return InputRequiredResult(
+            #     inputRequests={
+            #         "missing_args": ElicitRequest(
+            #             params=ElicitRequestFormParams(
+            #                 mode="form",
+            #                 message="Please provide raw_text, file_name, and storage (or a bundle) to update.",
+            #                 requestedSchema={
+            #                     "type": "object",
+            #                     "properties": {
+            #                         "bundle": {"type": "string"},
+            #                         "raw_text": {"type": "string"},
+            #                         "file_name": {"type": "string"},
+            #                         "storage": {"type": "string"}
+            #                     },
+            #                     "required": ["raw_text", "file_name"]
+            #                 }
+            #             )
+            #         )
+            #     }
+            # )
+            return [base.UserMessage(content="""To invoke update_note, re-run the slash command with these required arguments:
 
 - raw_text (str): The raw content to append or integrate into the existing note
 - file_name (str): The filename of the existing note to update (e.g. "2024-01-15-meeting.md")
 - storage (str): The storage alias where the note lives. Call list_storages to see available options.
+- bundle (str): (Optional) The config bundle providing defaults.
 
 Example: /mcp:dayo-notes-writer:update_note raw_text="..." file_name="my-note.md" storage="inbox""")]
-            return InputRequiredResult(
-                inputRequests={
-                    "missing_args": ElicitRequest(
-                        params=ElicitRequestFormParams(
-                            mode="form",
-                            message="Please provide raw_text, file_name, and storage to update.",
-                            requestedSchema={
-                                "type": "object",
-                                "properties": {
-                                    "raw_text": {"type": "string"},
-                                    "file_name": {"type": "string"},
-                                    "storage": {"type": "string"}
-                                },
-                                "required": ["raw_text", "file_name", "storage"]
-                            }
-                        )
-                    )
-                }
-            )
 
         update_prompt_path = _state.prompts_dir / "UPDATE_NOTE_PROMPT.md"
         try:
