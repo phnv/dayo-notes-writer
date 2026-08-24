@@ -30,7 +30,7 @@ bundles:
     storage: inbox
     options:
       overwrite: false
-  personal_thoughts:
+  inbox:
     template: personal
     prompt: personal
     storage: inbox
@@ -38,7 +38,7 @@ bundles:
       overwrite: false
 
 defaults:
-  bundle: personal_thoughts
+  bundle: inbox
 
 frontmatter:
   enabled: true

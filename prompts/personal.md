@@ -1,98 +1,44 @@
-# Personal Note Template
+# Personal Note — Template Instructions
 
-```yaml
----
-type: personal-note
-date: YYYY-MM-DD
-tags: []
-important: false
-options: []
----
-```
+Transform the input into a concise, readable Markdown note while preserving its complete meaning and information.
 
-## Allowed tags
+Prioritize **hierarchy, grouping and readability** over rewriting prose. Do not summarize away information. Keep the author's original distinctions, status markers, dates and emphasis.
 
-Use only tags from this list:
+## Marker grammar
 
-* `idea`
-* `decision`
-* `task`
-* `question`
-* `reflection`
-* `reference`
-* `project`
-* `personal`
+Interpret markers as structural metadata:
 
-Add a tag only when clearly supported by the content.
+| Marker       | Meaning                                                            |
+| ------------ | ------------------------------------------------------------------ |
+| `[dd/mm/yy]` | Everything below belongs to this date. Year may be omitted.        |
+| `=>`         | Main heading or top-level list item                                |
+| `+>`         | Subheading / sublist under `=>`                                    |
+| `-`          | List item                                                          |
+| `+`          | Subitem                                                            |
+| `++`         | Sub-subitem                                                        |
+| `>`          | Block/quote responding to or complementing the preceding statement |
+| `>>...`      | In-progress item; any sequence of `>` indicates progress           |
+| `*`          | Important                                                          |
+| `**`         | For later consideration/action                                     |
+| `***`        | Very important                                                     |
+| `***text***` | Very important reminder; highlight it                              |
+| `ok`         | Done                                                               |
+| `X`          | Could not be done                                                  |
+| `fail`       | Attempted but unsuccessful                                         |
 
-## Body
+Hierarchy:
 
-```markdown
-# [Main subject]
+`=>` > `+>` and `=>` > `-` > `+` > `++`
 
-## [Topic / date]
+Preserve marker meaning even when converting it into Markdown structure.
 
-- Main point
-  - Supporting point
-  - Supporting point
-    - Detail
+## Transformation rules
 
-> Related response, clarification or complementary thought.
-
-**Important:** important content
-
-***Very important:*** very important content
-
-- [ ] Pending item
-- [x] Completed item
-- [ ] Failed / could not be completed: ...
-- [ ] For later: ...
-```
-
-## Transformation example
-
-Input:
-
-```text
-[18/08] 
-=> chatbot project
-- finish storage
-+ database is working
-+ still need to test reload
-* important: don't change schema yet
-
-=> job search
-- applied to 3 jobs
-> still unsure if CV is the problem
-** review competitors later
-```
-
-Output:
-
-```markdown
----
-type: personal-note
-date: 2026-08-18
-tags:
-  - project
-  - task
-  - reflection
-important: true
-options: []
----
-
-# Personal Notes
-
-## Chatbot project
-
-- Finish storage
-  - Database is working.
-  - Still need to test reload.
-- **Important:** Do not change the schema yet.
-
-## Job search
-
-- Applied to 3 jobs.
-> Still unsure if the CV is the problem.
-- **For later:** Review competitors.
-```
+* Convert markers into clear Markdown structure rather than reproducing the markers literally.
+* Preserve dates and their scope.
+* Preserve status and priority information.
+* Preserve quotes/responses as subordinate context.
+* Group related material only when the relationship is explicit.
+* Do not infer relationships that are not present.
+* Keep unclear or incomplete statements rather than "fixing" their meaning.
+* Use the template's frontmatter fields only for information supported by the input.
