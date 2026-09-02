@@ -15,7 +15,7 @@ prompts:
 
 storage:
   inbox: /mnt/c/Users/Home/Documents/notes/inbox
-  reviews: ~/notes/reviews_drafts
+  # reviews: ~/notes/reviews_drafts
 
 bundles:
   daily_review:

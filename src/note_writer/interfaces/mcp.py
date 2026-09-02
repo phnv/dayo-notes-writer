@@ -44,24 +44,35 @@ class AppState:
 _state: AppState | None = None
 
 
-def resolve_bundle_args(state: AppState, bundle: str | None, **kwargs) -> dict:
-    """Resolve missing arguments from a configuration bundle if provided."""
+def resolve_args(state: AppState, bundle: str | None, **kwargs) -> dict:
+    """
+    Resolve tool/prompt arguments through a three-tier fallback pipeline:
+      1. Explicit kwargs (caller-supplied values always win)
+      2. Named bundle (fills any remaining None values)
+      3. defaults.bundle from config (applied when no bundle is explicitly named)
+    """
     result = dict(kwargs)
-    if bundle:
-        if bundle not in state.config.bundles:
-            raise ValueError(f"Bundle '{bundle}' not found in configuration.")
-        
-        bundle_config = state.config.bundles[bundle]
-        
-        if result.get("template") is None and bundle_config.template is not None:
-            result["template"] = bundle_config.template
-        if result.get("prompt") is None and bundle_config.prompt is not None:
-            result["prompt"] = bundle_config.prompt
-            
+
+    # Tier 3: fall back to the configured default bundle when no bundle is named
+    effective_bundle = bundle or state.config.defaults.get("bundle")
+
+    if effective_bundle:
+        if effective_bundle not in state.config.bundles:
+            raise ValueError(f"Bundle '{effective_bundle}' not found in configuration.")
+
+        bundle_cfg = state.config.bundles[effective_bundle]
+
+        # Fill only keys that are still None — explicit values always win
+        if result.get("template") is None and bundle_cfg.template is not None:
+            result["template"] = bundle_cfg.template
+        if result.get("prompt") is None and bundle_cfg.prompt is not None:
+            result["prompt"] = bundle_cfg.prompt
+
+        # storage key differs between tools (storage_alias) and prompts (storage)
         storage_key = "storage_alias" if "storage_alias" in result else "storage"
-        if result.get(storage_key) is None and bundle_config.storage is not None:
-            result[storage_key] = bundle_config.storage
-            
+        if result.get(storage_key) is None and bundle_cfg.storage is not None:
+            result[storage_key] = bundle_cfg.storage
+
     return result
 
 
@@ -126,10 +137,10 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         annotations=ToolAnnotations(read_only_hint=True),
         description="Read a note's content from a specific storage alias and filename."
     )
-    def read_note(storage_alias: str = None, filename: str = None, bundle: str = None, ctx: Context = None) -> str | InputRequiredResult:
+    def read_note(storage_alias: str | None = None, filename: str | None = None, bundle: str | None = None, ctx: Context = None) -> str | InputRequiredResult:
         state: AppState = ctx.request_context.lifespan_context["state"]
         
-        args = resolve_bundle_args(state, bundle, storage_alias=storage_alias)
+        args = resolve_args(state, bundle, storage_alias=storage_alias)
         storage_alias = args.get("storage_alias")
 
         if not storage_alias or not filename:
@@ -180,18 +191,18 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         )
     )
     def step2_save_note(
-        title: str, 
-        body: str, 
-        tags: list[str], 
-        frontmatter: str, # passed as JSON string
-        storage_alias: str = None, 
-        filename: str = None,
-        bundle: str = None,
+        title: str,
+        body: str,
+        tags: list[str],
+        frontmatter: str,  # passed as JSON string
+        storage_alias: str | None = None,
+        filename: str | None = None,
+        bundle: str | None = None,
         ctx: Context = None
     ) -> str | InputRequiredResult:
         state: AppState = ctx.request_context.lifespan_context["state"]
         
-        args = resolve_bundle_args(state, bundle, storage_alias=storage_alias)
+        args = resolve_args(state, bundle, storage_alias=storage_alias)
         storage_alias = args.get("storage_alias")
 
         if not storage_alias or not filename:
@@ -245,12 +256,16 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
 
     @mcp.tool(
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=False),
-        description="Append content to an existing note."
+        description=(
+            "Append content to an existing note. "
+            "Use append_mode='bottom' (default) to add at the end, or "
+            "append_mode='top' to insert just below any YAML frontmatter."
+        )
     )
-    def update_note(content: str, storage_alias: str = None, filename: str = None, bundle: str = None, ctx: Context = None) -> str | InputRequiredResult:
+    def update_note(content: str, storage_alias: str | None = None, filename: str | None = None, bundle: str | None = None, append_mode: str = "bottom", ctx: Context = None) -> str | InputRequiredResult:
         state: AppState = ctx.request_context.lifespan_context["state"]
         
-        args = resolve_bundle_args(state, bundle, storage_alias=storage_alias)
+        args = resolve_args(state, bundle, storage_alias=storage_alias)
         storage_alias = args.get("storage_alias")
 
         if not storage_alias or not filename:
@@ -283,12 +298,13 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         try:
             base_path = state.resolver.resolve(state.config.storage[storage_alias])
             file_path = base_path / filename
-            app_update_note(state.fs, str(file_path), content)
+            app_update_note(state.fs, str(file_path), content, append_mode=append_mode)
             return f"Successfully updated note at {file_path}"
         except NoteWriterError as e:
             raise ValueError(str(e))
         except Exception as e:
             raise ValueError(f"Failed to update note: {e}")
+
 
     # --- Resources ---
 
@@ -355,12 +371,12 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
 
     # --- Prompts (MCP Prompts) ---
     @mcp.prompt()
-    def write_note(raw_text: str = None, template: str = None, prompt: str = None, storage: str = None, bundle: str = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
+    def write_note(raw_text: str | None = None, template: str | None = None, prompt: str | None = None, storage: str | None = None, bundle: str | None = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
         """Prompt to write a new note using a specific template and instruction prompt."""
         if not _state:
             raise RuntimeError("Server state not initialized")
             
-        args = resolve_bundle_args(_state, bundle, template=template, prompt=prompt, storage=storage)
+        args = resolve_args(_state, bundle, template=template, prompt=prompt, storage=storage)
         template = args.get("template")
         prompt = args.get("prompt")
         storage = args.get("storage")
@@ -440,12 +456,12 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         ]
 
     @mcp.prompt()
-    def update_note(raw_text: str = None, file_name: str = None, storage: str = None, bundle: str = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
+    def update_note(raw_text: str | None = None, file_name: str | None = None, storage: str | None = None, bundle: str | None = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
         """Prompt to append content to an existing note."""
         if not _state:
             raise RuntimeError("Server state not initialized")
 
-        args = resolve_bundle_args(_state, bundle, storage=storage)
+        args = resolve_args(_state, bundle, storage=storage)
         storage = args.get("storage")
 
         if not raw_text or not file_name or not storage:

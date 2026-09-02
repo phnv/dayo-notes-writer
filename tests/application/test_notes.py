@@ -45,8 +45,59 @@ def test_read_note():
 def test_update_note():
     fs = FakeFilesystem()
     fs.write_text("/path/to/update.md", "Original.")
-    
+
     update_note(fs, "/path/to/update.md", "\nAppended.")
-    
+
     content = fs.read_text("/path/to/update.md")
     assert content == "Original.\nAppended."
+
+
+def test_update_note_bottom_is_default():
+    fs = FakeFilesystem()
+    fs.write_text("/path/to/update.md", "Original.")
+
+    update_note(fs, "/path/to/update.md", "\nAppended.", append_mode="bottom")
+
+    content = fs.read_text("/path/to/update.md")
+    assert content == "Original.\nAppended."
+
+
+def test_update_note_top_no_frontmatter():
+    fs = FakeFilesystem()
+    fs.write_text("/path/to/update.md", "Existing body.")
+
+    update_note(fs, "/path/to/update.md", "Prepended content.", append_mode="top")
+
+    content = fs.read_text("/path/to/update.md")
+    assert content == "Prepended content.\n\nExisting body."
+
+
+def test_update_note_top_with_frontmatter():
+    fs = FakeFilesystem()
+    existing = "---\ntitle: My Note\n---\n\nExisting body."
+    fs.write_text("/path/to/update.md", existing)
+
+    update_note(fs, "/path/to/update.md", "Prepended content.", append_mode="top")
+
+    content = fs.read_text("/path/to/update.md")
+    assert content == "---\ntitle: My Note\n---\n\nPrepended content.\n\nExisting body."
+
+
+def test_update_note_top_with_frontmatter_empty_body():
+    fs = FakeFilesystem()
+    existing = "---\ntitle: Only Header\n---\n"
+    fs.write_text("/path/to/update.md", existing)
+
+    update_note(fs, "/path/to/update.md", "New content.", append_mode="top")
+
+    content = fs.read_text("/path/to/update.md")
+    assert content == "---\ntitle: Only Header\n---\n\nNew content."
+
+
+def test_update_note_invalid_mode_raises():
+    fs = FakeFilesystem()
+    fs.write_text("/path/to/update.md", "Some content.")
+
+    import pytest
+    with pytest.raises(ValueError, match="append_mode must be 'top' or 'bottom'"):
+        update_note(fs, "/path/to/update.md", "content", append_mode="middle")
