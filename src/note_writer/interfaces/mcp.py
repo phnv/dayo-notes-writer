@@ -1,6 +1,8 @@
 import os
+import re
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -44,12 +46,13 @@ class AppState:
 _state: AppState | None = None
 
 
-def resolve_args(state: AppState, bundle: str | None, **kwargs) -> dict:
+def resolve_args(state: AppState, bundle: str | None, title: str | None = None, **kwargs) -> dict:
     """
     Resolve tool/prompt arguments through a three-tier fallback pipeline:
       1. Explicit kwargs (caller-supplied values always win)
       2. Named bundle (fills any remaining None values)
       3. defaults.bundle from config (applied when no bundle is explicitly named)
+    title is used only to expand the {slug} token in bundle filenames.
     """
     result = dict(kwargs)
 
@@ -67,14 +70,94 @@ def resolve_args(state: AppState, bundle: str | None, **kwargs) -> dict:
             result["template"] = bundle_cfg.template
         if result.get("prompt") is None and bundle_cfg.prompt is not None:
             result["prompt"] = bundle_cfg.prompt
-
-        # storage key differs between tools (storage_alias) and prompts (storage)
-        storage_key = "storage_alias" if "storage_alias" in result else "storage"
-        if result.get(storage_key) is None and bundle_cfg.storage is not None:
-            result[storage_key] = bundle_cfg.storage
+        if result.get("storage") is None and bundle_cfg.storage is not None:
+            result["storage"] = bundle_cfg.storage
+        # filename: only fill when caller explicitly passed the key (write/update tools)
+        if "filename" in result and result.get("filename") is None and bundle_cfg.filename is not None:
+            result["filename"] = expand_filename_tokens(bundle_cfg.filename, title=title)
 
     return result
 
+
+
+def expand_filename_tokens(template: str, title: str | None = None) -> str:
+    """
+    Expand filename tokens in a bundle filename template.
+      {date}      → YYYY-MM-DD
+      {time}      → HHMMSS
+      {datetime}  → YYYY-MM-DDTHHMMSS
+      {slug}      → slugified title; silently removed (with cleanup) when title is None
+    """
+    now = datetime.now()
+    result = template
+    result = result.replace("{date}", now.strftime("%Y-%m-%d"))
+    result = result.replace("{time}", now.strftime("%H%M%S"))
+    result = result.replace("{datetime}", now.strftime("%Y-%m-%dT%H%M%S"))
+
+    if title is not None:
+        slug = re.sub(r"[^\w\s-]", "", title.lower())
+        slug = re.sub(r"[\s_]+", "-", slug)
+        slug = slug.strip("-")
+        result = result.replace("{slug}", slug)
+    else:
+        result = result.replace("{slug}", "")
+        # Clean up hyphen artifacts left by empty slug
+        result = re.sub(r"-{2,}", "-", result)   # collapse double hyphens
+        result = re.sub(r"-\.", ".", result)       # remove hyphen before extension dot
+        result = result.lstrip("-")               # strip any leading hyphen
+
+    return result
+
+
+
+
+def _is_path(value: str) -> bool:
+    """True when the value looks like a filesystem path (contains / or \\)."""
+    return "/" in value or "\\" in value
+
+
+def resolve_storage(value: str, config: Config, resolver: PathResolver) -> Path:
+    """
+    Resolve a storage value to an absolute Path.
+    - Alias (no path separator): must exist in config.storage
+    - Path (contains / or \\): resolved directly via PathResolver
+    Raises ValueError with a clear message on unknown alias.
+    """
+    if _is_path(value):
+        return resolver.resolve(value)
+    if value not in config.storage:
+        raise ValueError(f"Storage alias '{value}' not found in configuration.")
+    return resolver.resolve(config.storage[value])
+
+
+def resolve_template(
+    value: str,
+    config: Config,
+    resolver: PathResolver,
+    templates_dir: Path,
+    fs,
+) -> str:
+    """
+    Resolve a template alias or raw path to its file content.
+    - Alias (no path separator): must exist in config.templates
+    - Path (contains / or \\): resolved via PathResolver and read directly
+    Raises ValueError on unknown alias or missing file.
+    """
+    if _is_path(value):
+        path = resolver.resolve(value)
+        try:
+            return fs.read_text(str(path))
+        except FileNotFoundError:
+            raise ValueError(f"Template file not found at {path}")
+
+    if value not in config.templates:
+        raise ValueError(f"Template alias '{value}' not found in configuration.")
+    template_rel_path = config.templates[value]
+    template_path = templates_dir.parent / template_rel_path
+    try:
+        return fs.read_text(str(template_path))
+    except FileNotFoundError:
+        raise ValueError(f"Template file not found at {template_path}")
 
 
 def get_default_paths():
@@ -84,7 +167,8 @@ def get_default_paths():
     config_path = Path(os.environ.get("CONFIG_PATH", root / "config" / "config.yaml"))
     prompts_dir = Path(os.environ.get("PROMPTS_DIR", root / "prompts"))
 
-    # @FINAL-REVIEW: TEMPLATES CAN BE LOCAL TO PROJECT OR ANY OTHER FOLDER
+
+    ### @FINAL-REVIEW: TEMPLATES CAN BE LOCAL TO PROJECT OR ANY OTHER FOLDER
     templates_dir = Path(os.environ.get("TEMPLATES_DIR", root / "templates"))
     return config_path, prompts_dir, templates_dir
 
@@ -135,28 +219,31 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
 
     @mcp.tool(
         annotations=ToolAnnotations(read_only_hint=True),
-        description="Read a note's content from a specific storage alias and filename."
+        description=(
+            "Read a note's content from storage. "
+            "'storage' accepts either a configured alias or a raw filesystem path."
+        )
     )
-    def read_note(storage_alias: str | None = None, filename: str | None = None, bundle: str | None = None, ctx: Context = None) -> str | InputRequiredResult:
+    def read_note(storage: str | None = None, filename: str | None = None, bundle: str | None = None, ctx: Context = None) -> str | InputRequiredResult:
         state: AppState = ctx.request_context.lifespan_context["state"]
-        
-        args = resolve_args(state, bundle, storage_alias=storage_alias)
-        storage_alias = args.get("storage_alias")
 
-        if not storage_alias or not filename:
+        args = resolve_args(state, bundle, storage=storage)
+        storage = args.get("storage")
+
+        if not storage or not filename:
             if ctx and ctx.request_context.protocol_version < "2026-07-28":
-                raise ValueError("Missing required arguments: storage_alias and filename are required.")
+                raise ValueError("Missing required arguments: storage and filename are required.")
             return InputRequiredResult(
                 inputRequests={
                     "missing_args": ElicitRequest(
                         params=ElicitRequestFormParams(
                             mode="form",
-                            message="Please provide both storage_alias and filename (or a bundle).",
+                            message="Please provide both storage and filename (or a bundle).",
                             requestedSchema={
                                 "type": "object",
                                 "properties": {
                                     "bundle": {"type": "string"},
-                                    "storage_alias": {"type": "string"},
+                                    "storage": {"type": "string"},
                                     "filename": {"type": "string"}
                                 },
                                 "required": ["filename"]
@@ -166,12 +253,8 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
                 }
             )
 
-        
-        if storage_alias not in state.config.storage:
-            raise ValueError(f"Storage alias '{storage_alias}' not found in configuration.")
-            
         try:
-            base_path = state.resolver.resolve(state.config.storage[storage_alias])
+            base_path = resolve_storage(storage, state.config, state.resolver)
             file_path = base_path / filename
             return app_read_note(state.fs, str(file_path))
         except NoteWriterError as e:
@@ -183,10 +266,8 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         annotations=ToolAnnotations(destructive_hint=True),
         description=(
             "[Step 2 of 2 — Note Creation] Write the LLM-transformed note to storage. "
-            "MUST only be called after invoking the `write_note` prompt (Step 1), which "
-            "provides the system instructions, template, and transformation rules. "
-            "Calling this tool without Step 1 will bypass template-based transformation "
-            "and produce a note that does not conform to the server's format rules. "
+            "MUST only be called after invoking the `write_note` prompt (Step 1). "
+            "'storage' accepts either a configured alias or a raw filesystem path. "
             "Overwrites if the file already exists."
         )
     )
@@ -195,30 +276,31 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         body: str,
         tags: list[str],
         frontmatter: str,  # passed as JSON string
-        storage_alias: str | None = None,
+        storage: str | None = None,
         filename: str | None = None,
         bundle: str | None = None,
         ctx: Context = None
     ) -> str | InputRequiredResult:
         state: AppState = ctx.request_context.lifespan_context["state"]
-        
-        args = resolve_args(state, bundle, storage_alias=storage_alias)
-        storage_alias = args.get("storage_alias")
 
-        if not storage_alias or not filename:
+        args = resolve_args(state, bundle, title=title, storage=storage, filename=filename)
+        storage = args.get("storage")
+        filename = args.get("filename")
+
+        if not storage or not filename:
             if ctx and ctx.request_context.protocol_version < "2026-07-28":
-                raise ValueError("Missing required arguments: storage_alias and filename are required.")
+                raise ValueError("Missing required arguments: storage and filename are required.")
             return InputRequiredResult(
                 inputRequests={
                     "missing_args": ElicitRequest(
                         params=ElicitRequestFormParams(
                             mode="form",
-                            message="Please provide both storage_alias and filename (or a bundle).",
+                            message="Please provide both storage and filename (or a bundle with filename).",
                             requestedSchema={
                                 "type": "object",
                                 "properties": {
                                     "bundle": {"type": "string"},
-                                    "storage_alias": {"type": "string"},
+                                    "storage": {"type": "string"},
                                     "filename": {"type": "string"}
                                 },
                                 "required": ["filename"]
@@ -228,24 +310,20 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
                 }
             )
 
-        
-        if storage_alias not in state.config.storage:
-            raise ValueError(f"Storage alias '{storage_alias}' not found in configuration.")
-            
         try:
             frontmatter_dict = json.loads(frontmatter) if frontmatter else {}
         except json.JSONDecodeError:
             raise ValueError("frontmatter must be a valid JSON string.")
-            
+
         draft = NoteDraft(
             title=title,
             body=body,
             tags=tags,
             frontmatter=frontmatter_dict
         )
-        
+
         try:
-            base_path = state.resolver.resolve(state.config.storage[storage_alias])
+            base_path = resolve_storage(storage, state.config, state.resolver)
             file_path = base_path / filename
             app_write_note(state.fs, str(file_path), draft)
             return f"Successfully wrote note to {file_path}"
@@ -258,30 +336,32 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=False),
         description=(
             "Append content to an existing note. "
+            "'storage' accepts either a configured alias or a raw filesystem path. "
             "Use append_mode='bottom' (default) to add at the end, or "
             "append_mode='top' to insert just below any YAML frontmatter."
         )
     )
-    def update_note(content: str, storage_alias: str | None = None, filename: str | None = None, bundle: str | None = None, append_mode: str = "bottom", ctx: Context = None) -> str | InputRequiredResult:
+    def update_note(content: str, storage: str | None = None, filename: str | None = None, bundle: str | None = None, append_mode: str = "bottom", ctx: Context = None) -> str | InputRequiredResult:
         state: AppState = ctx.request_context.lifespan_context["state"]
-        
-        args = resolve_args(state, bundle, storage_alias=storage_alias)
-        storage_alias = args.get("storage_alias")
 
-        if not storage_alias or not filename:
+        args = resolve_args(state, bundle, storage=storage, filename=filename)
+        storage = args.get("storage")
+        filename = args.get("filename")
+
+        if not storage or not filename:
             if ctx and ctx.request_context.protocol_version < "2026-07-28":
-                raise ValueError("Missing required arguments: storage_alias and filename are required.")
+                raise ValueError("Missing required arguments: storage and filename are required.")
             return InputRequiredResult(
                 inputRequests={
                     "missing_args": ElicitRequest(
                         params=ElicitRequestFormParams(
                             mode="form",
-                            message="Please provide both storage_alias and filename (or a bundle).",
+                            message="Please provide both storage and filename (or a bundle with filename).",
                             requestedSchema={
                                 "type": "object",
                                 "properties": {
                                     "bundle": {"type": "string"},
-                                    "storage_alias": {"type": "string"},
+                                    "storage": {"type": "string"},
                                     "filename": {"type": "string"}
                                 },
                                 "required": ["filename"]
@@ -291,12 +371,8 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
                 }
             )
 
-        
-        if storage_alias not in state.config.storage:
-            raise ValueError(f"Storage alias '{storage_alias}' not found in configuration.")
-            
         try:
-            base_path = state.resolver.resolve(state.config.storage[storage_alias])
+            base_path = resolve_storage(storage, state.config, state.resolver)
             file_path = base_path / filename
             app_update_note(state.fs, str(file_path), content, append_mode=append_mode)
             return f"Successfully updated note at {file_path}"
@@ -446,12 +522,12 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
                     resource=TextResourceContents(
                         uri=f"templates://{template}",
                         mimeType="text/markdown",
-                        text=get_template(template)
+                        text=resolve_template(template, _state.config, _state.resolver, _state.templates_dir, _state.fs)
                     )
                 )
             ),
             base.UserMessage(
-                content=f"Raw Text:\n{raw_text}\n\nTarget Storage Alias: {storage}"
+                content=f"Raw Text:\n{raw_text}\n\nTarget Storage: {storage}"
             )
         ]
 
@@ -528,7 +604,7 @@ Example: /mcp:dayo-notes-writer:update_note raw_text="..." file_name="my-note.md
                 )
             ),
             base.UserMessage(
-                content=f"Raw Text:\n{raw_text}\n\nTarget File: {file_name}\nTarget Storage Alias: {storage}"
+                content=f"Raw Text:\n{raw_text}\n\nTarget File: {file_name}\nTarget Storage: {storage}"
             )
         ]
 

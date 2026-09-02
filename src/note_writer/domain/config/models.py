@@ -5,7 +5,9 @@ class BundleConfig(BaseModel):
     template: str
     prompt: Optional[str] = None
     storage: str
+    filename: Optional[str] = None  # supports tokens: {date}, {time}, {datetime}, {slug}
     options: dict[str, Any] = Field(default_factory=dict)
+
 
 class FrontmatterConfig(BaseModel):
     enabled: bool = True
