@@ -65,7 +65,7 @@ The server exposes a set of deterministic capabilities to your agent:
 
 **Tools:**
 - `save_note`: Writes a completely new note based on your input and selected template.
-- `update_note`: Appends to or modifies an existing note.
+- `update_note`: Appends, prepends to or modifies an existing note.
 - `read_note`: Retrieves the contents of a specific note by path or alias.
 - `list_templates`: Shows all available note templates you have configured.
 - `list_storages`: Displays all configured storage directories.

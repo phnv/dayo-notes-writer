@@ -18,6 +18,15 @@ storage:
   # reviews: ~/notes/reviews_drafts
 
 bundles:
+  pendencias:
+    template: personal
+    prompt: update
+    storage: inbox
+    filename: Pendencias da semana.md
+    options:
+      append_mode: "top"
+      overwrite: false
+
   daily_review:
     template: weekly
     prompt: write
