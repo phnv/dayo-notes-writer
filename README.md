@@ -9,7 +9,8 @@ Dayo Notes Writer is a local, ephemeral note transformation utility powered by t
 
 - **Template-Driven Output:** Automatically formats raw text into structured notes, such as meetings, daily logs, or weekly reviews.
 - **Intelligent Storage Routing:** Saves your notes directly to predefined directories in your vault based on simple storage aliases.
-- **MCP Native:** Exposes its capabilities as standard MCP tools and resources, allowing seamless integration with any MCP-compatible agent or client.
+- **Standalone Agent:** Features a built-in intelligent agent (powered by `mcp-agent`) that can autonomously connect to the MCP server and process your notes entirely via natural language from your terminal.
+- **MCP Native:** Exposes its capabilities as standard MCP tools and resources, allowing seamless integration with any external MCP-compatible agent or client (like VS Code extensions).
 - **Strict Separation of Concerns:** The language model focuses purely on text generation and content formatting, while the local application retains full control over file paths, naming conventions, and directory structures.
 
 ## Getting Started
@@ -59,6 +60,22 @@ Configuration is managed via simple YAML files, keeping the setup declarative an
 > [!TIP]
 > The configuration system uses a resolution priority, allowing you to set global defaults that can be overridden by specific template settings or command-line arguments.
 
+## Using the Standalone Agent
+
+Dayo Notes Writer now includes a built-in agent that orchestrates the MCP server for you. This allows you to write or update notes entirely from your terminal using natural language, without needing a full IDE. 
+
+Make sure you have your API key set up (e.g., `OPENAI_API_KEY`) and run:
+
+```bash
+# Write a new note using the weekly template
+uv run note-writer write "Had a productive week. Shipped the auth feature and fixed 3 bugs." --template weekly
+
+# Update an existing note
+uv run note-writer update "Add that I also had a meeting with the design team" --template daily
+```
+
+The agent uses Human-in-the-Loop elicitation, so it will pause and prompt you to confirm the exact storage and filename before anything is written to disk.
+
 ## Available MCP Tools & Resources
 
 The server exposes a set of deterministic capabilities to your agent:
@@ -82,5 +99,4 @@ The server exposes a set of deterministic capabilities to your agent:
 The following enhancements are planned for upcoming releases:
 
 - Bundle, storage, template, and prompt creation commands for faster scaffolding.
-- A dedicated, lightweight agent to host the MCP client natively.
 - Quick desktop activation icons for seamless local access outside of traditional IDEs.
