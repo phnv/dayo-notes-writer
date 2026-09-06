@@ -6,13 +6,10 @@ from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from mcp.server.mcpserver import MCPServer, Context
-from mcp.server.mcpserver.prompts import base
+from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.fastmcp.prompts import base
 from mcp.types import (
     ToolAnnotations,
-    InputRequiredResult,
-    ElicitRequest,
-    ElicitRequestFormParams,
     TextResourceContents,
     EmbeddedResource,
 )
@@ -161,23 +158,19 @@ def resolve_template(
 
 
 def get_default_paths():
-    """Resolve default paths relative to the project root."""
-    # Assuming this runs from project root or via uv
-    root = Path.cwd()
-    config_path = Path(os.environ.get("CONFIG_PATH", root / "config" / "config.yaml"))
+    """Resolve the default paths for config, prompts, and templates."""
+    root = Path(os.environ.get("NOTE_WRITER_PROJECT_ROOT", Path.cwd()))
+    config_path = Path(os.environ.get("NOTE_WRITER_CONFIG", root / ".dayo" / "config.toml"))
     prompts_dir = Path(os.environ.get("PROMPTS_DIR", root / "prompts"))
-
-
-    ### @FINAL-REVIEW: TEMPLATES CAN BE LOCAL TO PROJECT OR ANY OTHER FOLDER
     templates_dir = Path(os.environ.get("TEMPLATES_DIR", root / "templates"))
     return config_path, prompts_dir, templates_dir
 
 
-def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, prompts_dir: Path, templates_dir: Path) -> MCPServer:
+def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, prompts_dir: Path, templates_dir: Path) -> FastMCP:
     """Factory to build the MCP server, useful for isolated testing."""
 
     @asynccontextmanager
-    async def lifespan(server: MCPServer):
+    async def lifespan(server: FastMCP):
         global _state
         _state = AppState(
             config=config,
@@ -189,7 +182,7 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         yield {"state": _state}
         _state = None
 
-    mcp = MCPServer("dayo-notes-writer", version="0.1.0", lifespan=lifespan)
+    mcp = FastMCP("dayo-notes-writer", lifespan=lifespan)
 
     # --- Tools ---
 
@@ -224,34 +217,14 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
             "'storage' accepts either a configured alias or a raw filesystem path."
         )
     )
-    def read_note(storage: str | None = None, filename: str | None = None, bundle: str | None = None, ctx: Context = None) -> str | InputRequiredResult:
+    def read_note(storage: str | None = None, filename: str | None = None, bundle: str | None = None, ctx: Context = None) -> str:
         state: AppState = ctx.request_context.lifespan_context["state"]
 
         args = resolve_args(state, bundle, storage=storage)
         storage = args.get("storage")
 
         if not storage or not filename:
-            if ctx and ctx.request_context.protocol_version < "2026-07-28":
-                raise ValueError("Missing required arguments: storage and filename are required.")
-            return InputRequiredResult(
-                inputRequests={
-                    "missing_args": ElicitRequest(
-                        params=ElicitRequestFormParams(
-                            mode="form",
-                            message="Please provide both storage and filename (or a bundle).",
-                            requestedSchema={
-                                "type": "object",
-                                "properties": {
-                                    "bundle": {"type": "string"},
-                                    "storage": {"type": "string"},
-                                    "filename": {"type": "string"}
-                                },
-                                "required": ["filename"]
-                            }
-                        )
-                    )
-                }
-            )
+            raise ValueError("Missing required arguments: storage and filename are required (or a bundle).")
 
         try:
             base_path = resolve_storage(storage, state.config, state.resolver)
@@ -280,7 +253,7 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         filename: str | None = None,
         bundle: str | None = None,
         ctx: Context = None
-    ) -> str | InputRequiredResult:
+    ) -> str:
         state: AppState = ctx.request_context.lifespan_context["state"]
 
         args = resolve_args(state, bundle, title=title, storage=storage, filename=filename)
@@ -288,27 +261,7 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         filename = args.get("filename")
 
         if not storage or not filename:
-            if ctx and ctx.request_context.protocol_version < "2026-07-28":
-                raise ValueError("Missing required arguments: storage and filename are required.")
-            return InputRequiredResult(
-                inputRequests={
-                    "missing_args": ElicitRequest(
-                        params=ElicitRequestFormParams(
-                            mode="form",
-                            message="Please provide both storage and filename (or a bundle with filename).",
-                            requestedSchema={
-                                "type": "object",
-                                "properties": {
-                                    "bundle": {"type": "string"},
-                                    "storage": {"type": "string"},
-                                    "filename": {"type": "string"}
-                                },
-                                "required": ["filename"]
-                            }
-                        )
-                    )
-                }
-            )
+            raise ValueError("Missing required arguments: storage and filename are required (or a bundle).")
 
         try:
             frontmatter_dict = json.loads(frontmatter) if frontmatter else {}
@@ -341,7 +294,7 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
             "append_mode='top' to insert just below any YAML frontmatter."
         )
     )
-    def update_note(content: str, storage: str | None = None, filename: str | None = None, bundle: str | None = None, append_mode: str = "bottom", ctx: Context = None) -> str | InputRequiredResult:
+    def update_note(content: str, storage: str | None = None, filename: str | None = None, bundle: str | None = None, append_mode: str = "bottom", ctx: Context = None) -> str:
         state: AppState = ctx.request_context.lifespan_context["state"]
 
         args = resolve_args(state, bundle, storage=storage, filename=filename)
@@ -349,27 +302,7 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         filename = args.get("filename")
 
         if not storage or not filename:
-            if ctx and ctx.request_context.protocol_version < "2026-07-28":
-                raise ValueError("Missing required arguments: storage and filename are required.")
-            return InputRequiredResult(
-                inputRequests={
-                    "missing_args": ElicitRequest(
-                        params=ElicitRequestFormParams(
-                            mode="form",
-                            message="Please provide both storage and filename (or a bundle with filename).",
-                            requestedSchema={
-                                "type": "object",
-                                "properties": {
-                                    "bundle": {"type": "string"},
-                                    "storage": {"type": "string"},
-                                    "filename": {"type": "string"}
-                                },
-                                "required": ["filename"]
-                            }
-                        )
-                    )
-                }
-            )
+            raise ValueError("Missing required arguments: storage and filename are required (or a bundle).")
 
         try:
             base_path = resolve_storage(storage, state.config, state.resolver)
@@ -447,7 +380,7 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
 
     # --- Prompts (MCP Prompts) ---
     @mcp.prompt()
-    def write_note(raw_text: str | None = None, template: str | None = None, prompt: str | None = None, storage: str | None = None, bundle: str | None = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
+    def write_note(raw_text: str | None = None, template: str | None = None, prompt: str | None = None, storage: str | None = None, bundle: str | None = None, ctx: Context = None) -> list[base.Message]:
         """Prompt to write a new note using a specific template and instruction prompt."""
         if not _state:
             raise RuntimeError("Server state not initialized")
@@ -532,7 +465,7 @@ def build_server(config: Config, fs: PathlibFilesystem, resolver: PathResolver, 
         ]
 
     @mcp.prompt()
-    def update_note(raw_text: str | None = None, file_name: str | None = None, storage: str | None = None, bundle: str | None = None, ctx: Context = None) -> list[base.Message] | InputRequiredResult:
+    def update_note(raw_text: str | None = None, file_name: str | None = None, storage: str | None = None, bundle: str | None = None, ctx: Context = None) -> list[base.Message]:
         """Prompt to append content to an existing note."""
         if not _state:
             raise RuntimeError("Server state not initialized")
@@ -612,7 +545,7 @@ Example: /mcp:dayo-notes-writer:update_note raw_text="..." file_name="my-note.md
 
 
 # Setup default module-level MCP server instance for main.py entrypoint
-def run_server() -> MCPServer:
+def run_server() -> FastMCP:
     config_path, prompts_dir, templates_dir = get_default_paths()
     try:
         config = load_config_from_file(config_path)

@@ -12,7 +12,10 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "mcp>=1.20.0,<2.0.0",
     "mcp-agent>=0.2.6",
+    "openai>=1.0.0",
+    "google-genai>=0.2.0",
     "pydantic>=2.13.4",
     "pyperclip>=1.11.0",
     "python-dotenv>=1.2.3",
@@ -27,6 +30,7 @@ dev = [
 
 [project.scripts]
 note-writer-mcp = "note_writer.main:main"
+note-writer = "note_writer.interfaces.agent:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"

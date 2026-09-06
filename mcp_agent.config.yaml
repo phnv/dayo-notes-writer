@@ -1,0 +1,17 @@
+# mcp-agent configuration for Dayo Notes Writer
+# API keys must be in .env or mcp_agent.secrets.yaml (gitignored)
+
+execution_engine: asyncio
+
+logger:
+  transports: [console]
+  level: warning
+  progress_display: false
+
+# LLM provider model defaults
+# API keys are loaded from .env (OPENAI_API_KEY, GEMINI_API_KEY)
+openai:
+  default_model: "gpt-4o"
+
+google:
+  default_model: "gemini-2.0-flash"
