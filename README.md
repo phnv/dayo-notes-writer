@@ -60,21 +60,80 @@ Configuration is managed via simple YAML files, keeping the setup declarative an
 > [!TIP]
 > The configuration system uses a resolution priority, allowing you to set global defaults that can be overridden by specific template settings or command-line arguments.
 
-## Using the Standalone Agent
+### Testing & Debugging with MCP Inspector
 
-Dayo Notes Writer now includes a built-in agent that orchestrates the MCP server for you. This allows you to write or update notes entirely from your terminal using natural language, without needing a full IDE. 
-
-Make sure you have your API key set up (e.g., `OPENAI_API_KEY`) and run:
+You can interactively inspect and test the MCP server tools and resources in your browser using the official MCP Inspector:
 
 ```bash
-# Write a new note using the weekly template
-uv run note-writer write "Had a productive week. Shipped the auth feature and fixed 3 bugs." --template weekly
+npx @modelcontextprotocol/inspector uv run note-writer-mcp
 
-# Update an existing note
-uv run note-writer update "Add that I also had a meeting with the design team" --template daily
+
+## Using the Standalone Agent
+
+Dayo Notes Writer now includes a built-in agent that orchestrates the MCP server for you. This allows you to write or update notes entirely from your terminal using natural language, without needing a full IDE.
+
+### Setup
+
+Make sure you have your API key set up in your environment:
+- For OpenAI: `export OPENAI_API_KEY="your-key-here"`
+- For Google Gemini: `export GEMINI_API_KEY="your-key-here"`
+
+### Global Options
+
+You can specify the LLM provider globally using the `--provider` flag or the `DAYO_LLM_PROVIDER` environment variable.
+
+```bash
+uv run note-writer --provider gemini write "My raw text..."
 ```
 
-The agent uses Human-in-the-Loop elicitation, so it will pause and prompt you to confirm the exact storage and filename before anything is written to disk.
+### The `write` Command
+
+Writes a completely new note from raw text.
+
+**Syntax:**
+`uv run note-writer write [OPTIONS]`
+
+**Options:**
+- `--text TEXT` : Raw text to transform into a note.
+- `--clipboard` : Read raw text directly from your system clipboard instead of providing it inline.
+- `--template TEMPLATE` : The template alias (e.g., `weekly`) or absolute path to dictate the note's structure.
+- `--storage STORAGE` : The storage alias (e.g., `inbox`) or path where the note should be saved.
+- `--bundle BUNDLE` : A configuration bundle name to automatically apply predefined defaults for template and storage.
+- `--filename FILENAME` : Force a specific output filename (optional; otherwise the LLM will generate one).
+
+**Examples:**
+```bash
+# Write using inline text
+uv run note-writer write --text "Had a productive week. Shipped the auth feature and fixed 3 bugs." --template weekly
+
+# Write using the clipboard contents and a bundle
+uv run note-writer write --clipboard --bundle work_dailies
+```
+uv run note-writer write --clipboard --file 'Dayo-Notes-Writer.md' --bundle inbox
+
+### The `update` Command
+
+Appends or modifies an existing note. 
+
+**Syntax:**
+`uv run note-writer update [OPTIONS]`
+
+**Options:**
+- `--text TEXT` : The raw text update you want to apply.
+- `--clipboard` : Read the update text directly from your system clipboard.
+- `--file FILE_NAME` : The exact filename of the note you want to update.
+- `--storage STORAGE` : The storage alias where the note currently lives.
+- `--bundle BUNDLE` : A configuration bundle name to resolve defaults.
+
+**Examples:**
+```bash
+# Update a specific note in a specific storage
+uv run note-writer update --text "Add that I also had a meeting with the design team" --file "2026-09-01-daily.md" --storage journal
+```
+
+### Human-in-the-Loop Validation
+
+For both commands, the agent uses Human-in-the-Loop (HITL) elicitation. After processing your request, it will pause in the terminal and prompt you to review and confirm the exact storage location and filename before any changes are written to your local disk. If you omit required arguments (like `--template`), the agent will ask you to provide them interactively.
 
 ## Available MCP Tools & Resources
 

@@ -160,7 +160,7 @@ def resolve_template(
 def get_default_paths():
     """Resolve the default paths for config, prompts, and templates."""
     root = Path(os.environ.get("NOTE_WRITER_PROJECT_ROOT", Path.cwd()))
-    config_path = Path(os.environ.get("NOTE_WRITER_CONFIG", root / ".dayo" / "config.toml"))
+    config_path = Path(os.environ.get("NOTE_WRITER_CONFIG", root / "config" / "config.yaml"))
     prompts_dir = Path(os.environ.get("PROMPTS_DIR", root / "prompts"))
     templates_dir = Path(os.environ.get("TEMPLATES_DIR", root / "templates"))
     return config_path, prompts_dir, templates_dir
@@ -547,15 +547,7 @@ Example: /mcp:dayo-notes-writer:update_note raw_text="..." file_name="my-note.md
 # Setup default module-level MCP server instance for main.py entrypoint
 def run_server() -> FastMCP:
     config_path, prompts_dir, templates_dir = get_default_paths()
-    try:
-        config = load_config_from_file(config_path)
-    except NoteWriterError as e:
-        # Fallback to empty config if not running in a configured project yet
-        # Better to have the server start and return errors on use than crash on boot
-        # if the user hasn't created the config file yet.
-        print(f"Warning: Could not load config: {e}")
-        config = Config()
-        
+    config = load_config_from_file(config_path)
     fs = PathlibFilesystem()
     resolver = PathResolver(app_root=Path.cwd())
     return build_server(config, fs, resolver, prompts_dir, templates_dir)
