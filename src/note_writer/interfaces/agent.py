@@ -123,6 +123,61 @@ def _get_llm_class(provider: Provider):
         raise ValueError(f"Unknown provider: {provider!r}. Choose 'openai' or 'gemini'.")
 
 
+async def _print_usage(token_counter, provider: Provider) -> None:
+    """Print a compact token usage + cost summary to stderr after a run.
+
+    Uses mcp-agent's built-in TokenCounter (Option 1).
+    Gemini degrades gracefully because GoogleAugmentedLLM does not call
+    record_usage() in the current version — no data will be recorded.
+
+    Future: add Gemini support via tokencost (Option 2 — documented in
+    docs/token-tracking.md, not yet implemented).
+    """
+    sep = "─" * 44
+    print(f"\n{sep}", file=sys.stderr)
+    print("  token usage", file=sys.stderr)
+
+    try:
+        summary = await token_counter.get_summary()
+        total = summary.usage
+
+        if total.total_tokens == 0:
+            # No data recorded — expected for Gemini (record_usage not wired).
+            if provider == "gemini":
+                print(
+                    "  [gemini token tracking not wired yet — cost: n/a]",
+                    file=sys.stderr,
+                )
+            else:
+                print("  [no token data recorded]", file=sys.stderr)
+        else:
+            print(
+                f"  in: {total.input_tokens:,}  "
+                f"out: {total.output_tokens:,}  "
+                f"total: {total.total_tokens:,}",
+                file=sys.stderr,
+            )
+
+            # Per-model breakdown (each LLM call / iteration)
+            if summary.model_usage:
+                for model_key, model_summary in summary.model_usage.items():
+                    mu = model_summary.usage
+                    print(
+                        f"  {model_key}:  "
+                        f"in {mu.input_tokens:,}  /  out {mu.output_tokens:,}",
+                        file=sys.stderr,
+                    )
+
+            # Estimated cost
+            cost = summary.cost
+            print(f"  estimated cost: ~${cost:.4f}", file=sys.stderr)
+
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [token tracking error: {exc}]", file=sys.stderr)
+
+    print(sep, file=sys.stderr)
+
+
 # ---------------------------------------------------------------------------
 # Agent operations
 # ---------------------------------------------------------------------------
@@ -153,7 +208,7 @@ async def run_write_note(
         human_input_callback=console_input_callback,
     )
 
-    async with app.run():
+    async with app.run() as running_app:
         agent = Agent(
             name="dayo-writer",
             instruction=_AGENT_INSTRUCTION,
@@ -187,7 +242,9 @@ async def run_write_note(
             response = await llm.generate_str(
                 message=prompt_result.messages,
             )
-            return response
+
+        await _print_usage(running_app.context.token_counter, provider)
+        return response
 
 
 async def run_update_note(
@@ -215,7 +272,7 @@ async def run_update_note(
         human_input_callback=console_input_callback,
     )
 
-    async with app.run():
+    async with app.run() as running_app:
         agent = Agent(
             name="dayo-updater",
             instruction=_AGENT_INSTRUCTION,
@@ -244,7 +301,9 @@ async def run_update_note(
             response = await llm.generate_str(
                 message=prompt_result.messages,
             )
-            return response
+
+        await _print_usage(running_app.context.token_counter, provider)
+        return response
 
 
 # ---------------------------------------------------------------------------
