@@ -14,7 +14,8 @@ prompts:
   personal: prompts/personal.md
 
 storage:
-  inbox: /mnt/c/Users/Home/Documents/notes/inbox
+  inbox: /mnt/c/Users/Home/Documents/notes/brain-dump/inbox
+  projects: /mnt/c/Users/Home/Documents/notes/Projects
   # reviews: ~/notes/reviews_drafts
 
 bundles:
